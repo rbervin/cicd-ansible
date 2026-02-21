@@ -1,4 +1,4 @@
-name: Build and Deploy Crypto Chatbot to GKE
+name: Build and Deploy Crypto Chatbot to GKE (Secured)
 
 on:
   push:
@@ -10,6 +10,9 @@ env:
   REPO: agent-repo
   CLUSTER_NAME: test-cluster-a
 
+# ─────────────────────────────────────
+# Permiso OIDC para Workload Identity Federation
+# ─────────────────────────────────────
 permissions:
   contents: read
   id-token: write
@@ -26,7 +29,8 @@ jobs:
         uses: actions/checkout@v4
 
       # ─────────────────────────────────────
-      # Autenticación en GCP
+      # Autenticación en GCP via Workload Identity Federation
+      # (Sin clave JSON — usa OIDC token efímero)
       # ─────────────────────────────────────
       - name: Authenticate to GCP via WIF
         uses: google-github-actions/auth@v2
@@ -44,7 +48,9 @@ jobs:
           gcloud auth configure-docker ${{ env.REGISTRY }}
 
       # ─────────────────────────────────────
-      # Build y Push — Backend (Python)
+      # Build — Backend (Python)
+      # (Ya NO se crea el .env — la API key
+      #  se inyecta como K8s Secret)
       # ─────────────────────────────────────
       - name: Build backend image
         run: |
@@ -52,9 +58,20 @@ jobs:
             -t ${{ env.REGISTRY }}/${{ secrets.PROJECT_ID }}/${{ env.REPO }}/agent-backend:${{ github.sha }} \
             -t ${{ env.REGISTRY }}/${{ secrets.PROJECT_ID }}/${{ env.REPO }}/agent-backend:latest \
             backend/
-      
+
       # ─────────────────────────────────────
-      #  Escaneo de seguridad — Backend
+      # Build — Frontend (Nginx)
+      # ─────────────────────────────────────
+      - name: Build frontend image
+        run: |
+          docker build \
+            -t ${{ env.REGISTRY }}/${{ secrets.PROJECT_ID }}/${{ env.REPO }}/agent-frontend:${{ github.sha }} \
+            -t ${{ env.REGISTRY }}/${{ secrets.PROJECT_ID }}/${{ env.REPO }}/agent-frontend:latest \
+            frontend/
+
+      # ─────────────────────────────────────
+      # 🔍 Escaneo de seguridad con Trivy
+      # (Bloquea el pipeline si hay CRITICAL/HIGH)
       # ─────────────────────────────────────
       - name: Trivy scan backend image
         uses: aquasecurity/trivy-action@0.33.1
@@ -65,24 +82,6 @@ jobs:
           severity: 'CRITICAL,HIGH'
           ignore-unfixed: true
 
-      - name: Push backend image
-        run: |
-          docker push ${{ env.REGISTRY }}/${{ secrets.PROJECT_ID }}/${{ env.REPO }}/agent-backend:${{ github.sha }}
-          docker push ${{ env.REGISTRY }}/${{ secrets.PROJECT_ID }}/${{ env.REPO }}/agent-backend:latest
-
-      # ─────────────────────────────────────
-      # Build y Push — Frontend (Nginx)
-      # ─────────────────────────────────────
-      - name: Build frontend image
-        run: |
-          docker build \
-            -t ${{ env.REGISTRY }}/${{ secrets.PROJECT_ID }}/${{ env.REPO }}/agent-frontend:${{ github.sha }} \
-            -t ${{ env.REGISTRY }}/${{ secrets.PROJECT_ID }}/${{ env.REPO }}/agent-frontend:latest \
-            frontend/
-      
-      # ─────────────────────────────────────
-      #  Escaneo de seguridad — Frontend
-      # ─────────────────────────────────────
       - name: Trivy scan frontend image
         uses: aquasecurity/trivy-action@0.33.1
         with:
@@ -92,13 +91,21 @@ jobs:
           severity: 'CRITICAL,HIGH'
           ignore-unfixed: true
 
+      # ─────────────────────────────────────
+      # Push imágenes (solo si Trivy pasa)
+      # ─────────────────────────────────────
+      - name: Push backend image
+        run: |
+          docker push ${{ env.REGISTRY }}/${{ secrets.PROJECT_ID }}/${{ env.REPO }}/agent-backend:${{ github.sha }}
+          docker push ${{ env.REGISTRY }}/${{ secrets.PROJECT_ID }}/${{ env.REPO }}/agent-backend:latest
+
       - name: Push frontend image
         run: |
           docker push ${{ env.REGISTRY }}/${{ secrets.PROJECT_ID }}/${{ env.REPO }}/agent-frontend:${{ github.sha }}
           docker push ${{ env.REGISTRY }}/${{ secrets.PROJECT_ID }}/${{ env.REPO }}/agent-frontend:latest
 
       # ─────────────────────────────────────
-      # Instalar Ansible y plugin de GKE
+      # Instalar Ansible
       # ─────────────────────────────────────
       - name: Install Ansible
         run: |
