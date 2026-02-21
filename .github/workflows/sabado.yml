@@ -26,13 +26,6 @@ jobs:
         uses: actions/checkout@v4
 
       # ─────────────────────────────────────
-      # Crear .env del backend dinámicamente
-      # ─────────────────────────────────────
-      - name: Create backend .env
-        run: |
-          echo "GOOGLE_API_KEY=${{ secrets.GOOGLE_API_KEY }}" > backend/.env
-
-      # ─────────────────────────────────────
       # Autenticación en GCP
       # ─────────────────────────────────────
       - name: Authenticate to GCP via WIF
@@ -117,6 +110,7 @@ jobs:
       - name: Deploy to GKE via Ansible
         env:
           PROJECT_ID: ${{ secrets.PROJECT_ID }}
+          GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
           USE_GKE_GCLOUD_AUTH_PLUGIN: "True"
         run: |
           ansible-playbook ansible/deploy-gke.yml \
